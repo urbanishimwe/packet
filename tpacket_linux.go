@@ -21,7 +21,7 @@ type packetScanner interface {
 }
 
 const (
-	minBuffer     = 256 * 1024
+	minBuffer     = 256 * 1024 // buffer for at least one packet
 	defaultBuffer = 2 * 1024 * 1024
 )
 
@@ -56,9 +56,9 @@ func (t *tPacketv3) createRing(fd int, size, timeout int64) (int64, error) {
 	size = alignBuffer(size)
 	var tReq = unix.TpacketReq3{}
 	tReq.Frame_size = minBuffer
-	if size <= minBuffer {
+	if size <= minBuffer*2 {
 		// small buffer was requested. set frame size to the half of the buffer size
-		// to leave one block to the kernel the time we will be processing another block
+		// to leave block(s) to the kernel the time we will be processing another block
 		tReq.Frame_size = minBuffer / 2
 	}
 	size = alignVals(size, int64(tReq.Frame_size))
@@ -296,7 +296,7 @@ func buildPacket(ssl *unix.RawSockaddrLinklayer, c *config, next unsafe.Pointer,
 			TCI:  tci,
 		},
 	}
-	raw = make([]byte, snap, snap)
+	raw = make([]byte, snap)
 	p.CapLen = copy(
 		raw,
 		buildSlice(

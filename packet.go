@@ -1,9 +1,17 @@
+// Package packet provides basic APIs for linux packet socket.
+/*
+This package uses memory mapping to increase performance and reduce system calls during packets reading.
+Most errors returned by this package are of type syscall.Errno, *os.SyscallError,
+and others listed in the documentation.
+
+Handler.Fd() is there to help users of this package to implements functionalities that are not provided
+by this package. However, it should be used with great care.
+*/
 package packet
 
 import (
 	"errors"
 	"net"
-	"os"
 	"syscall"
 	"time"
 	"unsafe"
@@ -11,27 +19,36 @@ import (
 	"golang.org/x/net/bpf"
 )
 
-// Handler is an interface for a packet socket.
+// Handler is an interface for a linux packet socket.
 type Handler interface {
 	// read a packet from the socket.
 	//
-	// poll, if true, means Read will wait for the socket read readiness until there is an error or a packet to read.
-	// if poll is false and there no packets to read, Read will return ErrWouldPoll.
-	// an error returned by poll may vary, see documentation of packet.Config and Handler.BreakLoop.
+	// poll, if true, Read will wait for a packet(s), an error, a timeout, or an event on the socket.
+	// if poll is false and there no packets to read, Read will return immediately with an error set to ErrWouldPoll.
 	//
+	// it is recommended to read documentation of Config and Handler.BreakLoop before using this method.
 	Read(poll bool) (raw []byte, info *Info, err error)
 	// transmit a packet to the socket.
+	//
+	// if iff is nil, interface bound to this socket is used.
+	// EINVAL is returned if iff is nil and socket is not bound to an interface or values in iff are invalid
+	// or protocol value is invalid.
+	//
+	// protocol is an ethernet protocol. values of common protocols are exposed by this library.
 	Write(buf []byte, iff *net.Interface, protocol Proto) (int, error)
-	// returns this packet socket file descriptor.
+	// returns packet socket file descriptor, always.
 	Fd() uintptr
-	// poll happening in the middle or after this call will return ErrBreakLoop.
+	// poll happening in the middle or after a call to this method will return ErrBreakLoop.
 	BreakLoop() error
-	// similar to (*Config).Filter, it attaches BPF filter to the socket. if filter length is 0,
-	// this function will detach recently added filters.
+	// similar to (*Config).Filter, attaches an assembled BPF program to the socket.
+	// if filter length is 0, this method will detach recently added filters.
 	SetBPF(filter []bpf.RawInstruction) error
-	Stats(cumulative bool) *Stats
-	// returns configurations of the handle. modifying values returned by this function
-	// may produce unknown results.
+	// if total is true Stats returns the total stats since the socket lifetime or stats
+	// since the recent call to this method otherwise.
+	//
+	// in case of any error, this method returns *Stats with zero values.
+	Stats(total bool) *Stats
+	// returns pointer to the internal Config used this handle.
 	Config() *Config
 	// returns the link type of the interface bound to this socket or LinkTypeNone.
 	LinkType() LinkType
@@ -39,16 +56,19 @@ type Handler interface {
 	Close() error
 }
 
-// NewHandler creates and activate a packet socket handler.
+// NewHandler activates and configure a linux packet socket and return its handler.
 //
-// iff specifies the network interface which will be used to receive data.
-func NewHandler(iff string, c *Config) (Handler, error) {
-	return newHandler(iff, c)
+// socket is bound to iff interface. if iff is empty string, socket receives packets from all interfaces
+// and config.NoLinkLayer is set to true.
+// if config is nil, default configuration is used.
+// it returns an error or a non-nil handler.
+func NewHandler(iff string, config *Config) (Handler, error) {
+	return newHandler(iff, config)
 }
 
 // Info useful information of a packet
 type Info struct {
-	Time    time.Time // unix timestamp the packet was captured, if that is known.
+	Time    time.Time // unix timestamp this packet was captured, if that is known.
 	CapLen  int       // the total number of bytes read off of the wire.
 	Len     int       // original packet length. should be>= CapLen.
 	Ifindex int32     // interface index.
@@ -57,7 +77,7 @@ type Info struct {
 	Link    Link
 }
 
-// Link packet info about link layer
+// Link is packet's link layer info
 type Link struct {
 	Protocol Proto    // ethernet protocol type
 	LinkType LinkType // arp type
@@ -71,7 +91,7 @@ type VLAN struct {
 
 // Stats contains statistics about a handle.
 type Stats struct {
-	// number of packets received by socket(excluding those that failed the BPF filter check).
+	// number of packets received by the socket(excluding those that failed the BPF filter check).
 	Recvs uint64
 	// number of packets dropped(due to the short buffer size). this number does not include packets that failed BPF filters.
 	Drops uint64
@@ -158,61 +178,56 @@ func (l LinkType) String() string {
 	}
 }
 
-// Config is used to configure a packet handler.
+// Config is used to configure a packet handler. all fields are optional.
 //
 // configuration should be initialized from calling DefaultConfig.
 // Default value of the field is the value resulted from calling DefaultConfig().
 // a care must be taken when modifying Config values(read docs of the fields).
 //
 // if you want to limit the packet size("snapshot") use BPF filters.
-// when invalid value is used, EINVAL is returned.
 type Config struct {
-	/*
-		the duration in milliseconds,
-
-		1. if socket is not in non-blocking mode, read will return TIMEDOUT after waiting socket
-		read readiness for this long.
-
-		2. if immediate mode is turned off, this is the maximum milliseconds we wait for a block of buffer
-		to become full so we can read many packets on a single poll.
-
-		0 means "do not timeout"; negative timeout may mean "let the kernel decide the buffer timeout"
-		and "wait for the socket to be ready (possibly) forever".
-	*/
+	// the duration in milliseconds,
+	//
+	// 1. if socket is not in non-blocking mode, read will return ETIMEDOUT after waiting socket
+	// readiness for this long.
+	//
+	// 2. if immediate mode is turned off, this is the maximum milliseconds we wait for a block of buffer
+	// to become full so we can read many packets on a single poll.
+	//
+	// 0 means "do not timeout"; negative timeout may mean "let the kernel decide the buffer timeout"
+	// and/or "wait for the socket to be ready (possibly) forever".
 	ReadTimeout int64
-	/*
-		Packets that arrive for a capture are stored in a buffer, so that they do not have to be read by the application as soon as they arrive.
-		a size that's too small could mean that, if too many packets are being captured,
-		packets could be dropped if the buffer fills up before the application can read packets from it,
-		while a size that's too large could use more non-pageable operating system memory than is necessary to prevent packets from being dropped.
-		custom value may be increased for buffer alignment.
-	*/
+	// Packets that arrive for a capture are stored in a buffer, so that they do not have to be read by the application as soon as they arrive.
+	// a size that's too small could mean that, if too many packets are being captured,
+	// packets could be dropped if the buffer fills up before the application can read packets from it,
+	// while a size that's too large could use more non-pageable operating system memory than is necessary to prevent packets from being dropped.
+	// custom value may be increased for buffer alignment.
 	ReadBufferSize int64
-	// classic BPF filters
+	// pre-attach an assembled BPF program to the socket.
 	Filter []bpf.RawInstruction
 	// deliver packets as soon as they arrive, with no buffering. unless there is a special reason for this,
 	// callers should not enable this feature. it many cause huge unused memory, truncating some packets and relatively higher CPU usages.
 	ImmediateMode bool
 	// enable promiscuous mode on an interface.
 	Promiscuous bool
-	// enable non-blocking mode. read/write will return immediately with EAGAIN assuming operation
+	// enable non-blocking mode. read/write will return immediately with EAGAIN  if the operation
 	// can not be performed immediately.
 	NonBlock bool
 	// writes and reads will provide packet buffer with link-layer header removed(cooked mode).
 	NoLinkLayer bool
-	// ethernet protocol.
+	// ethernet protocol to use in socket.
 	Proto Proto
 	// timestamp resolution in nano or micro seconds.
 	TstampResolution TstampResolution
 	// flow of packet to allow.
 	Direction Direction
-	// the maximum consecutive undesired Direction of the packet that should happen
+	// the maximum number of consecutive undesired Direction of the packet that should happen
 	// before a single call to Read decides to return a nil packet and a nil error.
 	// this field will not matter if Direction is DirInOut.
 	MaxNilRead uint64
 }
 
-// CheckIntegrity returns true if this configuration has all fields with valid values
+// CheckIntegrity checks values in this Config and return true if all of them are valid.
 func (c *Config) CheckIntegrity() bool {
 	if c == nil {
 		return true
@@ -233,24 +248,31 @@ func IsOSSupported() bool {
 	return isOSSupported
 }
 
-// Temporary returns true if this error is known by the library to be temporary.
-// timeout errors are also temporary.
+// Temporary checks if this error is a temporary error and return true or false otherwise.
+// timeout errors should also be temporary errors.
 func Temporary(err error) bool {
 	if e, ok := err.(interface{ Temporary() bool }); ok {
 		// ErrBreakLoop, ErrWouldPoll, syscall.Errno
 		return e.Temporary()
 	}
-	if e, ok := err.(*os.SyscallError); ok {
-		return e.Unwrap().(syscall.Errno).Temporary()
+	if e, ok := err.(interface{ Unwrap() error }); ok {
+		if e, ok := e.Unwrap().(interface{ Temporary() bool }); ok {
+			return e.Temporary()
+		}
 	}
 	return false
 }
 
-// Timeout returns true if this error is known by the library to be timeout.
+// Timeout checks if this error is a timeout error and return true or false otherwise.
 func Timeout(err error) bool {
 	if e, ok := err.(interface{ Timeout() bool }); ok {
 		// syscall.Errno, *os.SyscallError
 		return e.Timeout()
+	}
+	if e, ok := err.(interface{ Unwrap() error }); ok {
+		if e, ok := e.Unwrap().(interface{ Timeout() bool }); ok {
+			return e.Timeout()
+		}
 	}
 	return false
 }

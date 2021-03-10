@@ -190,7 +190,7 @@ func (h *handle) BreakLoop() error {
 	return nil
 }
 
-func (h *handle) Stats(cumulative bool) *Stats {
+func (h *handle) Stats(total bool) *Stats {
 	var st = &Stats{}
 	if h.headerVersion == unix.TPACKET_V3 {
 		st3, _ := unix.GetsockoptTpacketStatsV3(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS)
@@ -207,7 +207,7 @@ func (h *handle) Stats(cumulative bool) *Stats {
 	}
 	recvs := atomic.AddUint64(&h.stats.Recvs, st.Recvs)
 	drops := atomic.AddUint64(&h.stats.Drops, st.Drops)
-	if cumulative {
+	if total {
 		st.Drops = drops
 		st.Recvs = recvs
 	}
@@ -226,7 +226,7 @@ func (h *handle) SetBPF(filter []bpf.RawInstruction) error {
 	}
 	var p unix.SockFprog
 	p.Len = uint16(len(filter))
-	fltr := make([]unix.SockFilter, p.Len, p.Len)
+	fltr := make([]unix.SockFilter, p.Len)
 	// we could have casted this with unsafe pointer!
 	for i := range filter {
 		fltr[i].Code = filter[i].Op
@@ -293,10 +293,10 @@ func (h *handle) bind(protocol Proto) error {
 		Protocol: proto,
 	}
 	_, _, e := unix.Syscall(unix.SYS_BIND, uintptr(h.fd), uintptr(unsafe.Pointer(&addr)), unix.SizeofSockaddrLinklayer)
-	return os.NewSyscallError("bind", unix.Errno(e))
+	return os.NewSyscallError("bind", e)
 }
 
-func (h *handle) setPromiscuous(v bool) (err error) {
+func (h *handle) setPromiscuous(v bool) error {
 	ifindex := int32(0)
 	if h.netIf != nil {
 		ifindex = int32(h.netIf.Index)
@@ -306,14 +306,13 @@ func (h *handle) setPromiscuous(v bool) (err error) {
 		Type:    unix.PACKET_MR_PROMISC,
 	}
 	if v {
-		err = unix.SetsockoptPacketMreq(h.fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mr)
-	} else {
-		err = unix.SetsockoptPacketMreq(h.fd, unix.SOL_PACKET, unix.PACKET_DROP_MEMBERSHIP, &mr)
+		return os.NewSyscallError("setsockopt.promiscuous",
+			unix.SetsockoptPacketMreq(h.fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mr),
+		)
 	}
-	if err != nil {
-		return os.NewSyscallError("setsockopt.promiscuous", err)
-	}
-	return
+	return os.NewSyscallError("setsockopt.promiscuous",
+		unix.SetsockoptPacketMreq(h.fd, unix.SOL_PACKET, unix.PACKET_DROP_MEMBERSHIP, &mr),
+	)
 }
 
 func (h *handle) resetBreakLoop() {
@@ -404,8 +403,8 @@ func (h *handle) poll() error {
 				// socket closed!
 				return unix.EINVAL
 			}
-			// there is no current known possiblilities for this error, to ever occur on
-			// AF_PACKET socket.
+			// there is no current known possiblilities for this error to ever occur on
+			// AF_PACKET socket. at this point you can even open an issue on GitHub :P
 			if pollinfo[0].Revents&(unix.POLLHUP|unix.POLLRDHUP) != 0 {
 				// socket hangup! check if interface is still alive
 				if err := h.interfaceAlive(); err != nil {
@@ -450,16 +449,13 @@ func (h *handle) poll() error {
 }
 
 func (h *handle) interfaceAlive() error {
-	// listening on an "any" interface
+	// listening on "any" interface
 	if h.netIf == nil {
 		return nil
 	}
-	iff, err := net.InterfaceByName(h.netIf.Name)
+	iff, err := net.InterfaceByIndex(h.netIf.Index)
 	if err != nil {
-		// check if err is opError(and mostly is)
-		if e, ok := err.(*net.OpError); ok {
-			return os.NewSyscallError(e.Op, e.Unwrap())
-		}
+		return err
 	}
 	// interface went down?
 	if iff.Flags&net.FlagUp != 0 {
