@@ -151,7 +151,32 @@ func (t *tPacketv3) next() (raw []byte, p *Info) {
 	hdr := (*unix.Tpacket3Hdr)(t.n)
 	ssl := (*unix.RawSockaddrLinklayer)(offPointer(t.n, unix.SizeofTpacket3Hdr))
 	if checkDirection(ssl, t.config) {
-		raw, p = buildPacket(ssl, t.config, t.n, hdr.Status, hdr.Len, hdr.Snaplen, uint32(hdr.Mac), hdr.Sec, hdr.Nsec, hdr.Hv1.Vlan_tpid, uint16(hdr.Hv1.Vlan_tci))
+		nsec := int64(hdr.Nsec)
+		if t.config.tPresc == TstampMicro {
+			nsec = (nsec / 1000) * 1000
+		}
+		p = &Info{
+			Len:     int(hdr.Snaplen),
+			Time:    time.Unix(int64(hdr.Sec), nsec),
+			Status:  hdr.Status,
+			Ifindex: ssl.Ifindex,
+			Link: Link{
+				Protocol: Proto(bswap16(ssl.Protocol)),
+				LinkType: LinkType(ssl.Hatype),
+			},
+			VLAN: VLAN{
+				TPID: hdr.Hv1.Vlan_tpid,
+				TCI:  uint16(hdr.Hv1.Vlan_tci),
+			},
+		}
+		raw = make([]byte, hdr.Snaplen)
+		p.CapLen = copy(
+			raw,
+			buildSlice(
+				offPointer(t.n, uint32(hdr.Mac)),
+				int(hdr.Snaplen),
+			),
+		)
 	}
 	t.moveNext(hdr.Next_offset)
 	return
@@ -229,13 +254,18 @@ func (t *tPacketv2) hasNext() bool {
 	}
 	p := unsafe.Pointer(t.iovec[t.block].Base)
 	hdr := (*unix.Tpacket2Hdr)(p)
-	return atomic.LoadUint32(&hdr.Status)&unix.TP_STATUS_USER != 0
+	if atomic.LoadUint32(&hdr.Status)&unix.TP_STATUS_USER != 0 {
+		t.n = p
+		return true
+	}
+	return false
 }
 
 func (t *tPacketv2) moveNext() {
 	p := unsafe.Pointer(t.iovec[t.block].Base)
 	hdr := (*unix.Tpacket2Hdr)(p)
 	atomic.StoreUint32(&hdr.Status, unix.TP_STATUS_KERNEL)
+	t.n = nil
 	t.block++
 	if t.block >= len(t.iovec) {
 		t.block = 0
@@ -249,7 +279,32 @@ func (t *tPacketv2) next() (raw []byte, p *Info) {
 	hdr := (*unix.Tpacket2Hdr)(t.n)
 	ssl := (*unix.RawSockaddrLinklayer)(offPointer(t.n, unix.SizeofTpacket2Hdr))
 	if checkDirection(ssl, t.config) {
-		raw, p = buildPacket(ssl, t.config, t.n, hdr.Status, hdr.Len, hdr.Snaplen, uint32(hdr.Mac), hdr.Sec, hdr.Nsec, hdr.Vlan_tpid, hdr.Vlan_tci)
+		nsec := int64(hdr.Nsec)
+		if t.config.tPresc == TstampMicro {
+			nsec = (nsec / 1000) * 1000
+		}
+		p = &Info{
+			Len:     int(hdr.Snaplen),
+			Time:    time.Unix(int64(hdr.Sec), nsec),
+			Status:  hdr.Status,
+			Ifindex: ssl.Ifindex,
+			Link: Link{
+				Protocol: Proto(bswap16(ssl.Protocol)),
+				LinkType: LinkType(ssl.Hatype),
+			},
+			VLAN: VLAN{
+				TPID: hdr.Vlan_tpid,
+				TCI:  hdr.Vlan_tci,
+			},
+		}
+		raw = make([]byte, hdr.Snaplen)
+		p.CapLen = copy(
+			raw,
+			buildSlice(
+				offPointer(t.n, uint32(hdr.Mac)),
+				int(hdr.Snaplen),
+			),
+		)
 	}
 	t.moveNext()
 	return
@@ -276,35 +331,6 @@ func checkDirection(sll *unix.RawSockaddrLinklayer, config *config) bool {
 		return true
 	}
 	return config.dir != DirOut
-}
-
-func buildPacket(ssl *unix.RawSockaddrLinklayer, c *config, next unsafe.Pointer, status, len, snap, mac, sec, nsec uint32, tpid, tci uint16) (raw []byte, p *Info) {
-	if c.tPresc == TstampMicro {
-		nsec = (nsec / 1000) * 1000
-	}
-	p = &Info{
-		Len:     int(len),
-		Time:    time.Unix(int64(sec), int64(nsec)),
-		Status:  status,
-		Ifindex: ssl.Ifindex,
-		Link: Link{
-			Protocol: Proto(bswap16(ssl.Protocol)),
-			LinkType: LinkType(ssl.Hatype),
-		},
-		VLAN: VLAN{
-			TPID: tpid,
-			TCI:  tci,
-		},
-	}
-	raw = make([]byte, snap)
-	p.CapLen = copy(
-		raw,
-		buildSlice(
-			offPointer(next, mac),
-			int(snap),
-		),
-	)
-	return
 }
 
 func alignBuffer(bufferSize int64) int64 {

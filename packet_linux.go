@@ -293,7 +293,10 @@ func (h *handle) bind(protocol Proto) error {
 		Protocol: proto,
 	}
 	_, _, e := unix.Syscall(unix.SYS_BIND, uintptr(h.fd), uintptr(unsafe.Pointer(&addr)), unix.SizeofSockaddrLinklayer)
-	return os.NewSyscallError("bind", e)
+	if e != 0 {
+		return os.NewSyscallError("bind", e)
+	}
+	return nil
 }
 
 func (h *handle) setPromiscuous(v bool) error {
