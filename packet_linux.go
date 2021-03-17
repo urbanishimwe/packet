@@ -50,7 +50,7 @@ func newHandler(iff string, c *Config) (*handle, error) {
 		sockType = unix.SOCK_DGRAM
 		c.NoLinkLayer = true
 	}
-	// set protocol to 0, to avoid reading packets before setting ing buffer
+	// set protocol to 0, to avoid reading packets before creating buffer
 	fd, err := unix.Socket(unix.AF_PACKET, sockType, 0)
 	if err != nil {
 		return nil, os.NewSyscallError("socket.AF_PACKET", err)
