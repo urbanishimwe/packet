@@ -238,11 +238,12 @@ func (t *tPacketv2) createRing(fd int, size, mtu int64) (int64, error) {
 		return 0, err
 	}
 	t.iovec = make([]unix.Iovec, int(tReq.Frame_nr))
-	for frame := 0; frame < int(tReq.Frame_nr); frame++ {
-		for block := 0; block < int(tReq.Block_nr); block++ {
+	fPerB := int(tReq.Frame_nr / tReq.Block_nr)
+	for block := 0; block < int(tReq.Block_nr); block++ {
+		for frame := 0; frame < fPerB; frame++ {
 			off := (block * int(tReq.Block_size)) + (frame * int(tReq.Frame_size))
-			t.iovec[frame].Base = (*byte)(unsafe.Pointer(&t.r[off]))
-			t.iovec[frame].Len = uint64(tReq.Frame_size)
+			t.iovec[(fPerB*block)+frame].Base = &t.r[off]
+			t.iovec[(fPerB*block)+frame].Len = uint64(tReq.Frame_size)
 		}
 	}
 	return size, nil
