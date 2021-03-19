@@ -154,6 +154,9 @@ func (h *handle) Write(buf []byte, iff *net.Interface, proto Proto) (int, error)
 	if len(iff.HardwareAddr) > 8 {
 		return 0, unix.EINVAL
 	}
+	if len(buf) == 0 {
+		return 0, nil
+	}
 	copy(addr[:], iff.HardwareAddr)
 	ssl := &unix.RawSockaddrLinklayer{
 		Family:   unix.AF_PACKET,
