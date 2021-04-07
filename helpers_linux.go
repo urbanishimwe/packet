@@ -5,7 +5,7 @@ package packet
 import (
 	"fmt"
 	"io/ioutil"
-	"strconv"
+	"os"
 	"sync"
 	"unsafe"
 
@@ -36,11 +36,12 @@ func interfaceLinkType(iff string) (link LinkType) {
 	if err != nil {
 		return
 	}
-	n, err := strconv.Atoi(string(b))
+	_, err = fmt.Sscan(string(b), &link)
 	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return
 	}
-	if n == unix.ARPHRD_LOOPBACK {
+	if link == unix.ARPHRD_LOOPBACK {
 		// loopback (mostly) use ethernet header. we are going to assume that
 		// until someone prove us wrong!
 		link = LinkTypeEthernet

@@ -39,13 +39,22 @@ for {
 
 send packets,
 ```
-handler.Write(packetData, nil, packet.ProtoIP)
+handler.Write([]byte, nil, packet.ProtoIP)
 ```
 
 you can also use BPF filters and configurations to control the handler.
 
+### PCAP
+save packets in [pcap file format](https://github.com/urbanishimwe/packet/blob/master/cmd/pcap/pcap.go)
+```
+go build ./cmd/pcap
+```
+
+if you want to link with libpcap BPF expressions compiler use,
+```
+go build -tags=bpf ./cmd/pcap
+```
+
 ### Stability
 
-There no current reported issue but this library does not have a stable version yet!
-It is recommended to read documentation in order to use this library appropriately.
-It is very unlikely that signatures and types exposed by this package will change but new APIs might be added.
+It is very unlikely that signatures and types exposed by this package will change but new APIs might be added. It is recommended to read documentation in order to use this library appropriately.
