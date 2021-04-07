@@ -1,11 +1,10 @@
 // Package packet provides basic APIs for linux packet socket.
 /*
 This package uses memory mapping to increase performance and reduce system calls during packets reading.
-Most errors returned by this package are of type syscall.Errno, *os.SyscallError,
-and others listed in the documentation.
+Most errors returned by this package are of type syscall.Errno, *os.SyscallError, or others documented by this package.
 
-Handler.Fd() is there to help users of this package to implements functionalities that are not provided
-by this package. However, it should be used with great care.
+Handler.Fd() is there to help users of this package to implement functionalities that are not provided
+by this package. It should be used with great care.
 */
 package packet
 
@@ -159,7 +158,7 @@ var (
 // Proto ethernet protocol
 type Proto uint16
 
-// common protocols
+// common protocols, their values are OS dependant
 var (
 	ProtoIP  Proto
 	ProtoIP6 Proto
@@ -186,23 +185,26 @@ func (l LinkType) String() string {
 //
 // if you want to limit the packet size("snapshot") use BPF filters.
 type Config struct {
-	// the duration in milliseconds,
+	// the duration in milliseconds, if socket is not in non-blocking mode,
 	//
-	// 1. if socket is not in non-blocking mode, read will return ETIMEDOUT after waiting socket
-	// readiness for this long.
+	//  read will return ETIMEDOUT after waiting socket readiness for this long.
 	//
-	// 2. if immediate mode is turned off, this is the maximum milliseconds we wait for a block of buffer
-	// to become full so we can read many packets on a single poll.
-	//
-	// 0 means "do not timeout"; negative timeout may mean "let the kernel decide the buffer timeout"
-	// and/or "wait for the socket to be ready (possibly) forever".
+	// zero or negative timeout = don't timeout(default).
 	ReadTimeout int64
 	// Packets that arrive for a capture are stored in a buffer, so that they do not have to be read by the application as soon as they arrive.
 	// a size that's too small could mean that, if too many packets are being captured,
 	// packets could be dropped if the buffer fills up before the application can read packets from it,
 	// while a size that's too large could use more non-pageable operating system memory than is necessary to prevent packets from being dropped.
 	// custom value may be increased for buffer alignment.
+	//
+	// zero or negative bytes size = chose the default value(2MBs).
 	ReadBufferSize int64
+	// the duration in milliseconds, if socket is not in immediate mode,
+	//
+	// we wait for a block of buffer to become full so we can read many packets on a single poll.
+	//
+	// zero timeout means don't timeout(default); negative timeout = let the kernel decides the buffer timeout.
+	ReadBufferTimeout int64
 	// pre-attach an assembled BPF program to the socket.
 	Filter []bpf.RawInstruction
 	// deliver packets as soon as they arrive, with no buffering. unless there is a special reason for this,
@@ -256,9 +258,8 @@ func Temporary(err error) bool {
 		return e.Temporary()
 	}
 	if e, ok := err.(interface{ Unwrap() error }); ok {
-		if e, ok := e.Unwrap().(interface{ Temporary() bool }); ok {
-			return e.Temporary()
-		}
+		// for nested-unwrapper errors
+		return Temporary(e.Unwrap())
 	}
 	return false
 }
@@ -270,9 +271,8 @@ func Timeout(err error) bool {
 		return e.Timeout()
 	}
 	if e, ok := err.(interface{ Unwrap() error }); ok {
-		if e, ok := e.Unwrap().(interface{ Timeout() bool }); ok {
-			return e.Timeout()
-		}
+		// for nested-unwrapper errors
+		return Timeout(e.Unwrap())
 	}
 	return false
 }
@@ -313,16 +313,17 @@ func KernelVersion() (major int32, minor int32) {
 // DefaultConfig user should call this before creating custom Config object
 func DefaultConfig() *Config {
 	return &Config{
-		ReadBufferSize:   -1,
-		ReadTimeout:      0,
-		ImmediateMode:    false,
-		NonBlock:         false,
-		Promiscuous:      false,
-		TstampResolution: TstampNano,
-		Direction:        DirInOut,
-		NoLinkLayer:      false,
-		Proto:            ProtoAll,
-		MaxNilRead:       1024,
+		ReadBufferSize:    -1,
+		ReadTimeout:       0,
+		ReadBufferTimeout: 0,
+		ImmediateMode:     false,
+		NonBlock:          false,
+		Promiscuous:       false,
+		TstampResolution:  TstampNano,
+		Direction:         DirInOut,
+		NoLinkLayer:       false,
+		Proto:             ProtoAll,
+		MaxNilRead:        1024,
 	}
 }
 

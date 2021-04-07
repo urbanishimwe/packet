@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/net/bpf"
@@ -71,6 +72,10 @@ func newHandler(iff string, c *Config) (*handle, error) {
 	}
 	// we can set finalizer by now
 	runtime.SetFinalizer(h, (*handle).Close)
+	err = h.setTimestamp()
+	if err != nil {
+		return nil, err
+	}
 	err = h.setPromiscuous(c.Promiscuous)
 	if err != nil {
 		return nil, err
@@ -93,7 +98,7 @@ func newHandler(iff string, c *Config) (*handle, error) {
 	if err != nil {
 		return nil, err
 	}
-	flag := c.ReadTimeout
+	flag := c.ReadBufferTimeout
 	if h.headerVersion == unix.TPACKET_V2 {
 		flag = 0
 		if netIf != nil {
@@ -150,10 +155,10 @@ func (h *handle) Write(buf []byte, iff *net.Interface, proto Proto) (int, error)
 		}
 		iff = h.netIf
 	}
-	var addr [8]byte
 	if len(iff.HardwareAddr) > 8 {
 		return 0, unix.EINVAL
 	}
+	var addr [8]byte
 	if len(buf) == 0 {
 		return 0, nil
 	}
@@ -165,7 +170,7 @@ func (h *handle) Write(buf []byte, iff *net.Interface, proto Proto) (int, error)
 		Halen:    uint8(len(iff.HardwareAddr)),
 		Addr:     addr,
 	}
-	n, _, e := unix.Syscall6(
+	n, _, e := syscall.Syscall6(
 		unix.SYS_SENDTO,
 		uintptr(h.fd),
 		uintptr(unsafe.Pointer(&buf[0])),
@@ -203,7 +208,7 @@ func (h *handle) Stats(total bool) *Stats {
 		}
 	} else if h.headerVersion == unix.TPACKET_V2 {
 		st2, _ := unix.GetsockoptTpacketStats(h.fd, unix.SOL_PACKET, unix.PACKET_STATISTICS)
-		if st2 == nil {
+		if st2 != nil {
 			st.Recvs = uint64(st2.Packets)
 			st.Drops = uint64(st2.Drops)
 		}
@@ -256,6 +261,12 @@ func (h *handle) Close() error {
 	return err
 }
 
+func (h *handle) setTimestamp() error {
+	return os.NewSyscallError("setsockopt.SO_TIMESTAMPNS_NEW",
+		unix.SetsockoptInt(h.fd, unix.SOL_SOCKET, unix.SO_TIMESTAMPNS_NEW, 1),
+	)
+}
+
 func (h *handle) setPacketVersion(c *config, immediate bool) (err error) {
 	// the only way we MAY NOT read packets as soon they arrive is by using
 	// TPACKET_V3.
@@ -286,16 +297,17 @@ func (h *handle) bind(protocol Proto) error {
 	if h.netIf != nil {
 		ifindex = int32(h.netIf.Index)
 	}
-	proto := bswap16(unix.ETH_P_ALL)
+	proto := uint16(unix.ETH_P_ALL)
 	if protocol != 0 {
-		proto = bswap16(uint16(protocol))
+		proto = uint16(protocol)
 	}
+	proto = bswap16(proto)
 	addr := unix.RawSockaddrLinklayer{
 		Family:   unix.AF_PACKET,
 		Ifindex:  ifindex,
 		Protocol: proto,
 	}
-	_, _, e := unix.Syscall(unix.SYS_BIND, uintptr(h.fd), uintptr(unsafe.Pointer(&addr)), unix.SizeofSockaddrLinklayer)
+	_, _, e := syscall.Syscall(unix.SYS_BIND, uintptr(h.fd), uintptr(unsafe.Pointer(&addr)), unix.SizeofSockaddrLinklayer)
 	if e != 0 {
 		return os.NewSyscallError("bind", e)
 	}
@@ -363,12 +375,7 @@ func (h *handle) setPollTimeout() {
 			h.pollTimeout = -1
 		}
 	} else if timeout > 0 {
-		if h.headerVersion == unix.TPACKET_V3 && !hasBrokenTPacketV3() {
-			// block forever, let TPACKET_V3 wake us up
-			h.pollTimeout = -1
-		} else {
-			h.pollTimeout = int(timeout)
-		}
+		h.pollTimeout = int(timeout)
 	} else {
 		// they asked for it!
 		h.pollTimeout = -1
@@ -388,7 +395,7 @@ func (h *handle) poll() error {
 		{Fd: int32(h.fd), Events: unix.POLLIN, Revents: 0},
 		{Fd: int32(h.breakLoopfd), Events: unix.POLLIN, Revents: 0},
 	}
-	n, _, err := unix.Syscall(unix.SYS_POLL, uintptr(unsafe.Pointer(&pollinfo)), uintptr(2), uintptr(h.pollTimeout))
+	n, _, err := syscall.Syscall(unix.SYS_POLL, uintptr(unsafe.Pointer(&pollinfo)), uintptr(2), uintptr(h.pollTimeout))
 	switch {
 	case n > 0:
 		/*
