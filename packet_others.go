@@ -22,6 +22,4 @@ func kernelVersion() (major int32, minor int32) {
 	return -1, -1
 }
 
-func init() {
-	isOSSupported = false
-}
+const isOSSupported = false

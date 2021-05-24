@@ -7,7 +7,6 @@ import (
 	"io/ioutil"
 	"os"
 	"sync"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -93,14 +92,12 @@ func hasBrokenTPacketV3() bool {
 	return true
 }
 
-func init() {
-	LinkTypeEthernet = unix.ARPHRD_ETHER
-	LinkTypeNone = unix.ARPHRD_VOID
-	ProtoIP = unix.ETH_P_IP
-	ProtoIP6 = unix.ETH_P_IPV6
-	ProtoARP = unix.ETH_P_ARP
-	ProtoAll = unix.ETH_P_ALL
-	isOSSupported = true
-	v := uint32(0xff000000)
-	isBigEndian = *(*byte)(unsafe.Pointer(&v)) == 0xff
-}
+// common protocols, their values are OS dependant
+const (
+	ProtoIP  Proto = unix.ETH_P_IP
+	ProtoIP6 Proto = unix.ETH_P_IPV6
+	ProtoARP Proto = unix.ETH_P_ARP
+	ProtoAll Proto = unix.ETH_P_ALL
+)
+
+const isOSSupported = true

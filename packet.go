@@ -148,23 +148,15 @@ const (
 // LinkType data link layer type
 type LinkType uint16
 
-var (
+const (
 	// LinkTypeEthernet standard ethernet type
-	LinkTypeEthernet LinkType
+	LinkTypeEthernet LinkType = 1
 	// LinkTypeNone no link type or nothing is known
-	LinkTypeNone LinkType
+	LinkTypeNone LinkType = 0xffff
 )
 
 // Proto ethernet protocol
 type Proto uint16
-
-// common protocols, their values are OS dependant
-var (
-	ProtoIP  Proto
-	ProtoIP6 Proto
-	ProtoARP Proto
-	ProtoAll Proto
-)
 
 func (l LinkType) String() string {
 	switch l {
@@ -242,8 +234,6 @@ func (c *Config) CheckIntegrity() bool {
 	}
 	return true
 }
-
-var isOSSupported bool
 
 // IsOSSupported returns true if the calling OS is supported by this library
 func IsOSSupported() bool {
@@ -345,12 +335,10 @@ func offPointer(p unsafe.Pointer, off uint32) unsafe.Pointer {
 	return unsafe.Pointer(uintptr(p) + uintptr(off))
 }
 
-var isBigEndian bool
-
 // convert from/to big endian
 func bswap16(v uint16) uint16 {
 	if isBigEndian {
 		return v
 	}
-	return (v<<8)&0xFF00 | (v>>8)&0x00FF
+	return v<<8 | v>>8
 }
