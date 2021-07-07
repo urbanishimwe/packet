@@ -158,6 +158,14 @@ const (
 // Proto ethernet protocol
 type Proto uint16
 
+// common protocols, their values are linux's
+const (
+	ProtoIP  Proto = 0x800
+	ProtoIP6 Proto = 0x86dd
+	ProtoARP Proto = 0x806
+	ProtoAll Proto = 0x3
+)
+
 func (l LinkType) String() string {
 	switch l {
 	case LinkTypeEthernet:

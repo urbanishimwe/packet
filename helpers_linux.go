@@ -92,12 +92,4 @@ func hasBrokenTPacketV3() bool {
 	return true
 }
 
-// common protocols, their values are OS dependant
-const (
-	ProtoIP  Proto = unix.ETH_P_IP
-	ProtoIP6 Proto = unix.ETH_P_IPV6
-	ProtoARP Proto = unix.ETH_P_ARP
-	ProtoAll Proto = unix.ETH_P_ALL
-)
-
 const isOSSupported = true
