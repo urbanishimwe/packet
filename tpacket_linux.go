@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package packet
@@ -6,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -161,7 +163,7 @@ func (t *tPacketv3) next() (raw []byte, p *Info) {
 			Status:  hdr.Status,
 			Ifindex: ssl.Ifindex,
 			Link: Link{
-				Protocol: Proto(bswap16(ssl.Protocol)),
+				Protocol: Proto(htons(ssl.Protocol)),
 				LinkType: LinkType(ssl.Hatype),
 			},
 			VLAN: VLAN{
@@ -290,7 +292,7 @@ func (t *tPacketv2) next() (raw []byte, p *Info) {
 			Status:  hdr.Status,
 			Ifindex: ssl.Ifindex,
 			Link: Link{
-				Protocol: Proto(bswap16(ssl.Protocol)),
+				Protocol: Proto(htons(ssl.Protocol)),
 				LinkType: LinkType(ssl.Hatype),
 			},
 			VLAN: VLAN{
@@ -347,4 +349,22 @@ func alignBuffer(bufferSize int64) int64 {
 func createRing(fd int, size int64) ([]byte, error) {
 	buf, err := unix.Mmap(fd, 0, int(size), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
 	return buf, os.NewSyscallError("mmap", err)
+}
+
+func buildSlice(data unsafe.Pointer, len int) []byte {
+	return *(*[]byte)(unsafe.Pointer(&struct {
+		data unsafe.Pointer
+		len  int
+		cap  int
+	}{data, len, len}))
+}
+
+var pageSize = int64(syscall.Getpagesize())
+
+func alignVals(a, b int64) int64 {
+	return ((a + b - 1) / b) * b
+}
+
+func offPointer(p unsafe.Pointer, off uint32) unsafe.Pointer {
+	return unsafe.Pointer(uintptr(p) + uintptr(off))
 }

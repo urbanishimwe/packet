@@ -1,10 +1,10 @@
+//go:build linux
 // +build linux
 
 package packet
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sync"
 
@@ -31,7 +31,7 @@ func interfaceLinkType(iff string) (link LinkType) {
 	if iff == "" {
 		return
 	}
-	b, err := ioutil.ReadFile(fmt.Sprintf("/sys/class/net/%s/type", iff))
+	b, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/type", iff))
 	if err != nil {
 		return
 	}

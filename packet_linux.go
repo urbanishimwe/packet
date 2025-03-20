@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package packet
@@ -165,7 +166,7 @@ func (h *handle) Write(buf []byte, iff *net.Interface, proto Proto) (int, error)
 	copy(addr[:], iff.HardwareAddr)
 	ssl := &unix.RawSockaddrLinklayer{
 		Family:   unix.AF_PACKET,
-		Protocol: bswap16(uint16(proto)),
+		Protocol: htons(uint16(proto)),
 		Ifindex:  int32(iff.Index),
 		Halen:    uint8(len(iff.HardwareAddr)),
 		Addr:     addr,
@@ -301,7 +302,7 @@ func (h *handle) bind(protocol Proto) error {
 	if protocol != 0 {
 		proto = uint16(protocol)
 	}
-	proto = bswap16(proto)
+	proto = htons(proto)
 	addr := unix.RawSockaddrLinklayer{
 		Family:   unix.AF_PACKET,
 		Ifindex:  ifindex,
@@ -488,7 +489,6 @@ func (h *handle) loopBackIndex(promisc bool) int {
 		We check for loopback interface if this interface is not loopback.
 		this check can only matter with promiscuous mode, where interface will parse
 		packets that are not designated to it.
-		what if there are more than one loopback interface?
 	*/
 	ifs, _ := net.Interfaces()
 	for i := range ifs {

@@ -11,9 +11,7 @@ package packet
 import (
 	"errors"
 	"net"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"golang.org/x/net/bpf"
 )
@@ -217,7 +215,7 @@ type Config struct {
 	NonBlock bool
 	// writes and reads will provide packet buffer with link-layer header removed(cooked mode).
 	NoLinkLayer bool
-	// ethernet protocol to use in socket.
+	// ethernet protocol to use in socket not manually converted to network byte order.
 	Proto Proto
 	// timestamp resolution in nano or micro seconds.
 	TstampResolution TstampResolution
@@ -323,30 +321,4 @@ func DefaultConfig() *Config {
 		Proto:             ProtoAll,
 		MaxNilRead:        1024,
 	}
-}
-
-var pageSize = int64(syscall.Getpagesize())
-
-func alignVals(a, b int64) int64 {
-	return ((a + b - 1) / b) * b
-}
-
-func buildSlice(data unsafe.Pointer, len int) []byte {
-	return *(*[]byte)(unsafe.Pointer(&struct {
-		data unsafe.Pointer
-		len  int
-		cap  int
-	}{data, len, len}))
-}
-
-func offPointer(p unsafe.Pointer, off uint32) unsafe.Pointer {
-	return unsafe.Pointer(uintptr(p) + uintptr(off))
-}
-
-// convert from/to big endian
-func bswap16(v uint16) uint16 {
-	if isBigEndian {
-		return v
-	}
-	return v<<8 | v>>8
 }

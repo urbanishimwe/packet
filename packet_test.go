@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package packet
@@ -30,7 +31,7 @@ func TestOffpointer(t *testing.T) {
 func TestBswap16(t *testing.T) {
 	const a = 0x80dd
 	expect := [2]byte{0x80, 0xdd}
-	got := bswap16(a)
+	got := htons(a)
 	if *(*[2]byte)(unsafe.Pointer(&got)) != expect {
 		t.Errorf("%x to equal %x", *(*[2]byte)(unsafe.Pointer(&got)), expect)
 	}
